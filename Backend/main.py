@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
+import requests  # <-- Added for the search dropdown
 
 app = FastAPI()
 
@@ -14,6 +15,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- NEW: AUTO-COMPLETE SEARCH ENDPOINT ---
+@app.get("/search/{query}")
+def search_ticker(query: str):
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        valid_types = ["EQUITY", "ETF", "MUTUALFUND"]
+        results = [
+            {"symbol": q["symbol"], "name": q.get("shortname", "Unknown")} 
+            for q in data.get("quotes", []) 
+            if q.get("quoteType") in valid_types
+        ]
+        return {"results": results[:6]}
+    except Exception:
+        return {"results": []}
+
+# --- EXACT ORIGINAL FCF ENDPOINT (Untouched) ---
 @app.get("/fcf/{ticker}")
 def get_free_cash_flow(ticker: str):
     try:

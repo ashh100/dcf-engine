@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DCF Valuation Engine</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Intrinsic Value Engine</h1>
+        <p>Step 1: Fetch Historical Free Cash Flow</p>
+        
+        <div class="search-box" style="position: relative;">
+            <input type="text" id="tickerInput" placeholder="Enter Company Name (e.g., Apple, Reliance)" oninput="searchCompany()">
+            <button onclick="fetchCashFlow()">Get Data</button>
+            <ul id="suggestions" class="dropdown"></ul>
+        </div>
+
+        <div id="loading" style="display: none;">Fetching financial data...</div>
+        <div id="result"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
