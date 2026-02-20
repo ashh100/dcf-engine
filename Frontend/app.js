@@ -76,7 +76,7 @@ async function searchCompany() {
     }
 
     try {
-        const response = await fetch(`http://https://dcf-backend-u7s9.onrender.com/search/${query}`);
+        const response = await fetch(`https://dcf-backend-u7s9.onrender.com/search/${query}`);
         const data = await response.json();
         
         suggestionsList.innerHTML = ''; // Clear old suggestions
