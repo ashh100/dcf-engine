@@ -58,3 +58,67 @@ def get_free_cash_flow(ticker: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # --- NEW: THE DCF VALUATION ENDPOINT ---
+@app.get("/valuation/{ticker}")
+def get_valuation(ticker: str):
+    try:
+        stock = yf.Ticker(ticker)
+        cf = stock.cashflow
+        info = stock.info
+
+        if cf.empty or 'Free Cash Flow' not in cf.index:
+            raise HTTPException(status_code=404, detail="No Free Cash Flow data found.")
+
+        # 1. Get Historical FCF and sort from oldest to newest
+        fcf_series = cf.loc['Free Cash Flow'].dropna().sort_index()
+        if len(fcf_series) < 2:
+            raise HTTPException(status_code=400, detail="Not enough history to project growth.")
+
+        # 2. Calculate Average Growth Rate (Cap it between 2% and 15% for realistic models)
+        growth_rates = fcf_series.pct_change().dropna()
+        avg_growth = growth_rates.mean()
+        g = max(0.02, min(avg_growth, 0.15))
+
+        # 3. Project next 5 years of FCF
+        last_fcf = fcf_series.iloc[-1]
+        future_fcf = []
+        for i in range(1, 6):
+            next_fcf = last_fcf * ((1 + g) ** i)
+            future_fcf.append(next_fcf)
+
+        # 4. Terminal Value
+        wacc = 0.10  # 10% discount rate
+        perpetual_growth = 0.025  # 2.5% long-term growth
+        terminal_value = (future_fcf[-1] * (1 + perpetual_growth)) / (wacc - perpetual_growth)
+
+        # 5. Discount to Present Value
+        pv_fcf = sum([cf / ((1 + wacc) ** i) for i, cf in enumerate(future_fcf, 1)])
+        pv_tv = terminal_value / ((1 + wacc) ** 5)
+        enterprise_value = pv_fcf + pv_tv
+
+        # 6. Calculate Per Share Value
+        shares = info.get('sharesOutstanding')
+        if not shares:
+            raise HTTPException(status_code=404, detail="Shares outstanding data missing.")
+
+        total_cash = info.get('totalCash', 0)
+        total_debt = info.get('totalDebt', 0)
+        equity_value = enterprise_value + total_cash - total_debt
+
+        intrinsic_value_per_share = equity_value / shares
+        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+
+        return {
+            "ticker": ticker.upper(),
+            "current_price": round(current_price, 2),
+            "intrinsic_value": round(intrinsic_value_per_share, 2),
+            "assumptions": {
+                "projected_growth_rate": f"{round(g * 100, 2)}%",
+                "wacc": "10.0%",
+                "perpetual_growth": "2.5%"
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

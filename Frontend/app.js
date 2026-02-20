@@ -1,45 +1,65 @@
 // --- 1. THE GET DATA LOGIC (For the Button) ---
+// --- 1. THE UPGRADED GET DATA LOGIC ---
 async function fetchCashFlow() {
     const ticker = document.getElementById('tickerInput').value;
     const resultDiv = document.getElementById('result');
     const loadingDiv = document.getElementById('loading');
 
-    // Make sure they typed something
     if (!ticker) {
         alert("Please enter a ticker symbol!");
         return;
     }
 
-    // Clear old data and show a loading message
     resultDiv.innerHTML = ""; 
     loadingDiv.style.display = "block"; 
 
     try {
-        // Send the request to your Python Backend
-        const response = await fetch(`http://127.0.0.1:8000/fcf/${ticker}`);
-        const data = await response.json();
+        // Fetch BOTH the historical data and the new valuation math at the same time
+        const [fcfResponse, valResponse] = await Promise.all([
+            fetch(`http://127.0.0.1:8000/fcf/${ticker}`),
+            fetch(`http://127.0.0.1:8000/valuation/${ticker}`)
+        ]);
 
-        loadingDiv.style.display = "none"; // Hide loading message
+        const fcfData = await fcfResponse.json();
+        const valData = await valResponse.json();
 
-        // Display the results
-        if (response.ok) {
-            let htmlContent = `<h2>${data.ticker} Free Cash Flow</h2><ul>`;
+        loadingDiv.style.display = "none"; 
+
+        if (fcfResponse.ok && valResponse.ok) {
+            // Determine if the stock is a good deal (Green) or too expensive (Red)
+            const isUndervalued = valData.intrinsic_value > valData.current_price;
+            const color = isUndervalued ? "#4caf50" : "#ff4d4d";
+            const verdict = isUndervalued ? "UNDERVALUED (BUY)" : "OVERVALUED (SELL)";
+
+            // Build the Dashboard HTML
+            let htmlContent = `
+                <div style="background-color: #2c2c2c; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 2px solid ${color};">
+                    <h2>${valData.ticker} Valuation Model</h2>
+                    <h3 style="margin: 5px 0;">Current Market Price: $${valData.current_price}</h3>
+                    <h3 style="margin: 5px 0; color: ${color};">Intrinsic Value: $${valData.intrinsic_value}</h3>
+                    <h4 style="color: ${color}; margin-top: 15px;">Verdict: ${verdict}</h4>
+                    <hr style="border-color: #444; margin: 15px 0;">
+                    <p style="font-size: 14px; color: #aaa;">
+                        Assumptions: ${valData.assumptions.projected_growth_rate} Growth | ${valData.assumptions.wacc} WACC | ${valData.assumptions.perpetual_growth} Terminal Rate
+                    </p>
+                </div>
+                <h3>Historical Free Cash Flow</h3>
+                <ul>
+            `;
             
-            // Loop through the dictionary we sent from Python
-            for (const [date, fcf] of Object.entries(data.free_cash_flow)) {
-                // .toLocaleString() adds commas to the massive numbers so they are readable
+            // Add the historical FCF list
+            for (const [date, fcf] of Object.entries(fcfData.free_cash_flow)) {
                 htmlContent += `<li><strong>${date}:</strong> ${fcf.toLocaleString()}</li>`;
             }
             
             htmlContent += `</ul>`;
             resultDiv.innerHTML = htmlContent;
         } else {
-            // If the user typed a fake ticker
-            resultDiv.innerHTML = `<p class="error">Error: ${data.detail}</p>`;
+            resultDiv.innerHTML = `<p class="error">Error fetching data. Ensure the ticker is valid.</p>`;
         }
     } catch (error) {
         loadingDiv.style.display = "none";
-        resultDiv.innerHTML = `<p class="error">Failed to connect. Is your Python Uvicorn server running?</p>`;
+        resultDiv.innerHTML = `<p class="error">Failed to connect to Python backend.</p>`;
     }
 }
 
