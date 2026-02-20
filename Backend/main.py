@@ -59,13 +59,16 @@ def get_free_cash_flow(ticker: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-    # --- NEW: THE DCF VALUATION ENDPOINT ---
+# --- NEW: THE DCF VALUATION ENDPOINT ---
 @app.get("/valuation/{ticker}")
 def get_valuation(ticker: str):
     try:
         stock = yf.Ticker(ticker)
         cf = stock.cashflow
-        info = stock.info
+        bs = stock.balance_sheet  # <-- NEW: Get cash/debt securely here
+        
+        # <-- NEW: fast_info bypasses Yahoo's cloud blockers!
+        fast_info = stock.fast_info 
 
         if cf.empty or 'Free Cash Flow' not in cf.index:
             raise HTTPException(status_code=404, detail="No Free Cash Flow data found.")
@@ -97,17 +100,21 @@ def get_valuation(ticker: str):
         pv_tv = terminal_value / ((1 + wacc) ** 5)
         enterprise_value = pv_fcf + pv_tv
 
-        # 6. Calculate Per Share Value
-        shares = info.get('sharesOutstanding')
-        if not shares:
+        # 6. Calculate Per Share Value using fast_info & balance_sheet
+        try:
+            shares = fast_info['shares']
+        except KeyError:
             raise HTTPException(status_code=404, detail="Shares outstanding data missing.")
 
-        total_cash = info.get('totalCash', 0)
-        total_debt = info.get('totalDebt', 0)
+        # Safely pull cash and debt from the balance sheet
+        total_cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
+        total_debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
+        
         equity_value = enterprise_value + total_cash - total_debt
-
         intrinsic_value_per_share = equity_value / shares
-        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+        
+        # Safely pull the last live price
+        current_price = fast_info['lastPrice']
 
         return {
             "ticker": ticker.upper(),
@@ -120,5 +127,7 @@ def get_valuation(ticker: str):
             }
         }
 
+    except HTTPException:
+        raise  # <-- NEW: Allows our specific 400/404 errors to actually show up!
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
