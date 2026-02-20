@@ -16,8 +16,8 @@ async function fetchCashFlow() {
     try {
         // Fetch BOTH the historical data and the new valuation math at the same time
         const [fcfResponse, valResponse] = await Promise.all([
-            fetch(`http://127.0.0.1:8000/fcf/${ticker}`),
-            fetch(`http://127.0.0.1:8000/valuation/${ticker}`)
+            fetch(`https://dcf-backend-u7s9.onrender.com/fcf/${ticker}`),
+            fetch(`https://dcf-backend-u7s9.onrender.com/valuation/${ticker}`)
         ]);
 
         const fcfData = await fcfResponse.json();
@@ -76,7 +76,7 @@ async function searchCompany() {
     }
 
     try {
-        const response = await fetch(`http://127.0.0.1:8000/search/${query}`);
+        const response = await fetch(`http://https://dcf-backend-u7s9.onrender.com/search/${query}`);
         const data = await response.json();
         
         suggestionsList.innerHTML = ''; // Clear old suggestions
