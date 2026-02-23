@@ -1,4 +1,5 @@
 fastapi
 uvicorn
-yfinance
+yfinance>=0.2.36
+requests
 pandas
