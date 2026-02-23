@@ -23,16 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- STEALTH SESSION ---
-# This tricks Yahoo Finance into thinking Render is a real Chrome browser
-stealth_session = requests.Session()
-stealth_session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1"
-})
+
 
 @app.get("/search/{query}")
 def search_ticker(query: str):
@@ -54,7 +45,7 @@ def search_ticker(query: str):
 def get_free_cash_flow(ticker: str):
     try:
         # Pass the stealth session to yfinance!
-        stock = yf.Ticker(ticker, session=stealth_session)
+        stock = yf.Ticker(ticker)
         cf = stock.cashflow
         if cf is None or cf.empty or 'Free Cash Flow' not in cf.index:
             raise HTTPException(status_code=404, detail="No cash flow data found.")
