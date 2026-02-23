@@ -31,7 +31,8 @@ async function fetchCashFlow() {
             const color = isUndervalued ? "#4caf50" : "#ff4d4d";
             const verdict = isUndervalued ? "UNDERVALUED (BUY)" : "OVERVALUED (SELL)";
 
-            // Build the Dashboard HTML
+          
+           // Build the Dashboard HTML
             let htmlContent = `
                 <div style="background-color: #2c2c2c; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 2px solid ${color};">
                     <h2>${valData.ticker} Valuation Model</h2>
@@ -39,9 +40,13 @@ async function fetchCashFlow() {
                     <h3 style="margin: 5px 0; color: ${color};">Intrinsic Value: $${valData.intrinsic_value}</h3>
                     <h4 style="color: ${color}; margin-top: 15px;">Verdict: ${verdict}</h4>
                     <hr style="border-color: #444; margin: 15px 0;">
-                    <p style="font-size: 14px; color: #aaa;">
-                        Assumptions: ${valData.assumptions.projected_growth_rate} Growth | ${valData.assumptions.wacc} WACC | ${valData.assumptions.perpetual_growth} Terminal Rate
-                    </p>
+                    <div style="font-size: 14px; color: #ccc; line-height: 1.6; background: #1e1e1e; padding: 10px; border-radius: 5px;">
+                        <strong style="color: #fff;">📊 CAPM Model Assumptions:</strong><br>
+                        • Projected FCF Growth: <strong>${valData.assumptions.projected_growth_rate}</strong><br>
+                        • Dynamic WACC (Discount Rate): <strong>${valData.assumptions.wacc}</strong><br>
+                        • Stock Beta (Volatility): <strong>${valData.assumptions.beta_used}</strong><br>
+                        • Terminal Growth Rate: <strong>${valData.assumptions.perpetual_growth}</strong>
+                    </div>
                 </div>
                 <h3>Historical Free Cash Flow</h3>
                 <ul>
