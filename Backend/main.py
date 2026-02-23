@@ -1,26 +1,24 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
-import requests  # <-- Added for the search dropdown
+import requests
+import math
+import traceback
 
 app = FastAPI()
 
-# --- The CORS Bridge ---
-# This allows your JavaScript frontend to talk to this Python backend without being blocked by the browser.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows any frontend to connect. We will restrict this to your GitHub Pages URL later.
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- NEW: AUTO-COMPLETE SEARCH ENDPOINT ---
 @app.get("/search/{query}")
 def search_ticker(query: str):
     url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
     headers = {"User-Agent": "Mozilla/5.0"}
-    
     try:
         response = requests.get(url, headers=headers)
         data = response.json()
@@ -34,32 +32,21 @@ def search_ticker(query: str):
     except Exception:
         return {"results": []}
 
-# --- EXACT ORIGINAL FCF ENDPOINT (Untouched) ---
 @app.get("/fcf/{ticker}")
 def get_free_cash_flow(ticker: str):
     try:
-        # 1. Fetch the stock data from Yahoo Finance
         stock = yf.Ticker(ticker)
         cf = stock.cashflow
+        if cf.empty or 'Free Cash Flow' not in cf.index:
+            raise HTTPException(status_code=404, detail="No cash flow data found.")
         
-        if cf.empty:
-            raise HTTPException(status_code=404, detail="No cash flow data found for this ticker.")
-        
-        # 2. Extract the 'Free Cash Flow' row directly
-        # yfinance conveniently calculates this for us (Operating Cash Flow - CapEx)
         fcf_data = cf.loc['Free Cash Flow'].dropna().to_dict()
-        
-        # 3. Format the dates cleanly for our JSON response
         formatted_data = {str(date.date()): value for date, value in fcf_data.items()}
-        
-        return {
-            "ticker": ticker.upper(),
-            "free_cash_flow": formatted_data
-        }
+        return {"ticker": ticker.upper(), "free_cash_flow": formatted_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-# --- NEW: THE QUANT-GRADE DCF VALUATION ENDPOINT ---
+# --- BULLETPROOF QUANT-GRADE DCF ENDPOINT ---
 @app.get("/valuation/{ticker}")
 def get_valuation(ticker: str):
     try:
@@ -67,66 +54,71 @@ def get_valuation(ticker: str):
         cf = stock.cashflow
         bs = stock.balance_sheet
         inc_stmt = stock.income_stmt 
-        fast_info = stock.fast_info
-        info = stock.info  # Used carefully for Beta
+        info = stock.info  
 
         if cf.empty or 'Free Cash Flow' not in cf.index:
             raise HTTPException(status_code=404, detail="No Free Cash Flow data found.")
 
-        # --- 1. CORE DATA EXTRACTION ---
-        try:
-            shares = fast_info['shares']
-            current_price = fast_info['lastPrice']
-        except KeyError:
-            raise HTTPException(status_code=404, detail="Core pricing/shares data missing.")
+        # --- 1. SAFE DATA EXTRACTION ---
+        shares = info.get('sharesOutstanding', info.get('impliedSharesOutstanding'))
+        current_price = info.get('currentPrice', info.get('previousClose'))
+        
+        # Fallback if the standard 'info' dictionary is missing pricing
+        if not shares or not current_price:
+            try:
+                shares = stock.fast_info.shares
+                current_price = stock.fast_info.last_price
+            except Exception:
+                raise HTTPException(status_code=404, detail="Core pricing/shares data missing.")
 
-        total_cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
-        total_debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
+        # Helper function to safely extract dataframe values and catch NaNs
+        def safe_extract(df, row_name):
+            if df is not None and not df.empty and row_name in df.index:
+                val = df.loc[row_name].iloc[0]
+                return val if not math.isnan(val) else 0
+            return 0
+
+        total_cash = safe_extract(bs, 'Cash And Cash Equivalents')
+        total_debt = safe_extract(bs, 'Total Debt')
         market_cap = shares * current_price
 
         # --- 2. DYNAMIC WACC CALCULATION (CAPM) ---
-        # A. Risk-Free Rate (Live 10-Yr Treasury)
         try:
-            tnx_yield = yf.Ticker("^TNX").fast_info['lastPrice']
-            risk_free_rate = tnx_yield / 100
+            tnx = yf.Ticker("^TNX")
+            risk_free_rate = tnx.fast_info.last_price / 100
         except Exception:
-            risk_free_rate = 0.042  # Fallback to 4.2% if Treasury data fails
+            risk_free_rate = 0.042  # 4.2% Fallback
 
-        # B. Beta (Volatility)
         beta = info.get('beta', 1.0)
+        if beta is None or math.isnan(beta): 
+            beta = 1.0 
 
-        # C. Cost of Equity
         expected_market_return = 0.10
         cost_of_equity = risk_free_rate + (beta * (expected_market_return - risk_free_rate))
 
-        # D. Cost of Debt & Tax Rate
-        try:
-            interest_expense = inc_stmt.loc['Interest Expense'].iloc[0]
-            cost_of_debt = interest_expense / total_debt if total_debt > 0 else 0
-        except Exception:
-            cost_of_debt = 0.05  # Fallback to 5%
+        interest_expense = safe_extract(inc_stmt, 'Interest Expense')
+        cost_of_debt = interest_expense / total_debt if total_debt > 0 else 0.05
 
-        try:
-            tax_provision = inc_stmt.loc['Tax Provision'].iloc[0]
-            pretax_income = inc_stmt.loc['Pretax Income'].iloc[0]
-            tax_rate = tax_provision / pretax_income if pretax_income > 0 else 0.21
-        except Exception:
-            tax_rate = 0.21  # Standard corporate rate
+        tax_provision = safe_extract(inc_stmt, 'Tax Provision')
+        pretax_income = safe_extract(inc_stmt, 'Pretax Income')
+        tax_rate = tax_provision / pretax_income if pretax_income > 0 else 0.21
 
-        # E. Final WACC Calculation
         total_capital = market_cap + total_debt
         weight_equity = market_cap / total_capital if total_capital > 0 else 1
         weight_debt = total_debt / total_capital if total_capital > 0 else 0
 
         calculated_wacc = (weight_equity * cost_of_equity) + (weight_debt * cost_of_debt * (1 - tax_rate))
-        
-        # Guardrail: Cap WACC between 6% and 15% so weird accounting anomalies don't break the model
         wacc = max(0.06, min(calculated_wacc, 0.15))
 
         # --- 3. PROJECT FCF & TERMINAL VALUE ---
         fcf_series = cf.loc['Free Cash Flow'].dropna().sort_index()
         growth_rates = fcf_series.pct_change().dropna()
-        g = max(0.02, min(growth_rates.mean(), 0.15))
+        
+        avg_growth = growth_rates.mean()
+        if math.isnan(avg_growth):
+            avg_growth = 0.05  # Fallback to 5% if growth math fails
+            
+        g = max(0.02, min(avg_growth, 0.15))
 
         last_fcf = fcf_series.iloc[-1]
         future_fcf = [last_fcf * ((1 + g) ** i) for i in range(1, 6)]
@@ -148,7 +140,7 @@ def get_valuation(ticker: str):
             "intrinsic_value": round(intrinsic_value_per_share, 2),
             "assumptions": {
                 "projected_growth_rate": f"{round(g * 100, 2)}%",
-                "wacc": f"{round(wacc * 100, 2)}%",  # <-- Now showing the dynamic WACC!
+                "wacc": f"{round(wacc * 100, 2)}%", 
                 "perpetual_growth": "2.5%",
                 "beta_used": round(beta, 2)
             }
@@ -157,4 +149,7 @@ def get_valuation(ticker: str):
     except HTTPException:
         raise
     except Exception as e:
+        # Prints the EXACT line of failure to your Render logs
+        print(f"CRITICAL ERROR for {ticker}:")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
