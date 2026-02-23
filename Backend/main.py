@@ -4,6 +4,14 @@ import yfinance as yf
 import requests
 import math
 import traceback
+import os # <--- ADD THIS
+
+# --- RENDER CACHE FIX ---
+# Force yfinance to save its cache in Render's allowed temporary folder
+cache_dir = "/tmp/yfinance"
+os.makedirs(cache_dir, exist_ok=True)
+yf.set_tz_cache_location(cache_dir)
+# ------------------------
 
 app = FastAPI()
 
